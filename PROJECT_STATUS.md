@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-v0.6 发布工程化进行中：产品身份已迁移，公开仓库已创建，CI/Release 工作流正在收敛为可审计的最小权限流程。v0.5 Phase A 离线实现和后端真实契约验收已完成；真实 Obsidian 命令交互仍待验收，真实 DeepSeek 因本机没有已保存 Key 而未发起。
+v0.6 公开仓库基线已建立：产品身份、发布文档、最小权限 CI、人工 Release workflow、依赖审计和静态发布候选均已完成并推送。v0.5 Phase A 离线实现和后端真实契约验收已完成；真实 Obsidian 命令交互仍待验收，真实 DeepSeek 因本机没有已保存 Key 而未发起。
 
 ## 上游基线
 
@@ -52,6 +52,8 @@ v0.6 发布工程化进行中：产品身份已迁移，公开仓库已创建，
 - [x] v0.6 发布工程基线：秘密扫描未发现个人密钥、GitHub token、私钥或 AWS 凭据；生产依赖审计为 0 漏洞。Release workflow 不再自动改版本、提交或推送，改为人工触发并先执行完整验证。
 - [x] v0.6 依赖审计：在现有版本范围内刷新 lockfile 并以 `npm ci` 验证；critical/high/low 已清零，运行时依赖 0 漏洞。剩余 20 个 moderate 均来自 Jest/ts-jest 开发覆盖率链，未采用会破坏当前测试栈的 `npm audit fix --force`。
 - [x] v0.6 发布候选静态验收：构建包只含 `main.js`、`manifest.json`、`styles.css`，三个文件与仓库构建产物 SHA-256 一致；ZIP 内容无多余文件。
+- [x] 首个本项目公开基线 `7263ec7` 已推送到 `origin/main`；GitHub CI run `39459466784` 的依赖安装、生产依赖审计、402 项测试、lint、格式、build 和发行校验全部通过。
+- [x] GitHub secret scanning 当前为 0 告警；已启用仓库 vulnerability alerts，未启用自动安全修复或自动建 PR。
 
 ## 待确认
 

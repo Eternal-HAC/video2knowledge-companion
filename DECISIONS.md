@@ -160,3 +160,4 @@
 5. **秘密审计**：公开前扫描未发现个人 API Key、GitHub token、私钥或 AWS key。源码中的 YouTube Innertube client key 来自保留的公开上游历史，是公开客户端标识，不属于用户凭据；不通过拆分字符串伪装它。
 6. **格式基线**：为让公开 CI 从首个提交开始可通过，对 `src/` 与 `tests/` 的 19 个上游存量文件执行一次纯机械 Prettier 格式化；必须在格式化后重新运行完整测试、lint 和 build，确认无行为变化。
 7. **依赖审计**：锁文件在既有 semver 范围内更新 39 个包，清除 critical/high/low 报告；生产依赖审计为 0。剩余 20 个 moderate 全部位于 Jest/ts-jest 覆盖率工具链，npm 只给出把 ts-jest 强制降级到 27 的破坏性方案，因此拒绝 `--force`。CI 使用只读 token 且不注入 secrets，并将 `npm audit --omit=dev --audit-level=moderate` 作为发布硬门。
+8. **GitHub 安全设置**：公开仓库保留 secret scanning，并启用 vulnerability alerts；不启用自动安全修复，避免在没有人工审查时自动创建依赖 PR。
