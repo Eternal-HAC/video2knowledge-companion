@@ -6,11 +6,13 @@ export class PromptModal extends Modal {
 	private submitted = false;
 	private value: string;
 	private initialValue?: string;
+	private readonly title: string;
 
-	constructor(app: App, initialValue?: string) {
+	constructor(app: App, initialValue?: string, title = "YouTube URL") {
 		super(app);
 		this.initialValue = initialValue;
 		this.value = initialValue || "";
+		this.title = title;
 	}
 
 	listenInput(evt: KeyboardEvent) {
@@ -21,7 +23,7 @@ export class PromptModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.titleEl.setText("YouTube URL");
+		this.titleEl.setText(this.title);
 		this.createForm();
 	}
 
@@ -35,7 +37,7 @@ export class PromptModal extends Modal {
 	createForm(): void {
 		// Input field
 		const textInput = new TextComponent(this.contentEl);
-		textInput.inputEl.style.width = "100%";
+		textInput.inputEl.addClass("yt-transcript__prompt-input");
 		textInput.onChange((value) => (this.value = value));
 		textInput.inputEl.addEventListener("keydown", (evt: KeyboardEvent) =>
 			this.enterCallback(evt),

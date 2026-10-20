@@ -1,79 +1,90 @@
-name: Release Obsidian plugin
+name: Create Obsidian plugin release
 
 on:
     workflow_dispatch:
         inputs:
             version:
-                description: "Version number (e.g. 1.4.0)"
+                description: "Exact manifest version, without a v prefix"
                 required: true
-
-env:
-    PLUGIN_NAME: obsidian-ytranscript
+                type: string
 
 permissions:
     contents: write
 
+concurrency:
+    group: release
+    cancel-in-progress: false
+
 jobs:
     release:
         runs-on: ubuntu-latest
+        timeout-minutes: 20
 
         steps:
-            - uses: actions/checkout@v4
+            - name: Check out main
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
-                  token: ${{ secrets.GITHUB_TOKEN }}
+                  ref: main
+                  persist-credentials: false
 
-            - uses: actions/setup-node@v4
+            - name: Set up Node.js
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
-                  node-version: 20
+                  node-version: 22
                   cache: npm
 
-            - name: Bump versions
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Audit production dependency surface
+              run: npm audit --omit=dev --audit-level=moderate
+
+            - name: Validate requested version
               env:
-                  VERSION: ${{ inputs.version }}
+                  REQUESTED_VERSION: ${{ inputs.version }}
               run: |
-                  npm version "$VERSION" --no-git-tag-version
                   node -e "
                     const fs = require('fs');
-                    const v = process.env.VERSION;
-
+                    const requested = process.env.REQUESTED_VERSION;
                     const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-                    manifest.version = v;
-                    fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, '\t') + '\n');
-
-                    const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
-                    versions[v] = manifest.minAppVersion;
-                    fs.writeFileSync('versions.json', JSON.stringify(versions, null, '\t') + '\n');
+                    if (!/^\d+\.\d+\.\d+$/.test(requested)) {
+                      throw new Error('Version must be numeric semantic version without a v prefix.');
+                    }
+                    if (requested !== manifest.version) {
+                      throw new Error('Requested version must exactly match manifest.json.');
+                    }
                   "
 
-            - name: Build
-              run: npm ci && npm run build
+            - name: Run tests
+              run: npm test -- --runInBand
 
-            - name: Commit, tag, and push
+            - name: Run lint
+              run: npm run lint
+
+            - name: Check formatting
+              run: npm run check-format
+
+            - name: Build release assets
+              run: npm run build
+
+            - name: Validate release metadata and assets
+              run: npm run validate-release
+
+            - name: Package optional archive
               env:
                   VERSION: ${{ inputs.version }}
-              run: |
-                  git config user.name "github-actions[bot]"
-                  git config user.email "github-actions[bot]@users.noreply.github.com"
-                  git add package.json manifest.json versions.json
-                  git commit -m "Release $VERSION"
-                  git tag "$VERSION"
-                  git push && git push --tags
-
-            - name: Package plugin
-              env:
-                  VERSION: ${{ inputs.version }}
-              run: |
-                  mkdir "$PLUGIN_NAME"
-                  cp main.js manifest.json styles.css "$PLUGIN_NAME"
-                  zip -r "$PLUGIN_NAME.zip" "$PLUGIN_NAME"
+              run: zip -j "video2knowledge-companion-${VERSION}.zip" main.js manifest.json styles.css
 
             - name: Create GitHub release
-              uses: softprops/action-gh-release@v2
-              with:
-                  tag_name: ${{ inputs.version }}
-                  name: ${{ inputs.version }}
-                  files: |
-                      ${{ env.PLUGIN_NAME }}.zip
-                      main.js
-                      manifest.json
-                      styles.css
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  gh release create "$VERSION" \
+                    main.js \
+                    manifest.json \
+                    styles.css \
+                    "video2knowledge-companion-${VERSION}.zip" \
+                    --target "$GITHUB_SHA" \
+                    --title "$VERSION" \
+                    --generate-notes

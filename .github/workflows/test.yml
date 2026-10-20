@@ -1,41 +1,52 @@
-name: Build and test project
+name: CI
+
 on:
     push:
-        branches: [master]
+        branches: [main]
     pull_request:
-        branches: [master]
+        branches: [main]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
 
 jobs:
-    format:
+    verify:
         runs-on: ubuntu-latest
-        name: Check code formatting
+        timeout-minutes: 15
+
         steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
-                  node-version: 20
-                  cache: npm
-            - run: npm ci
-            - run: npm run check-format
-    build:
-        runs-on: ubuntu-latest
-        name: Build project
-        steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
+                  persist-credentials: false
+
+            - name: Set up Node.js
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
-                  node-version: 20
+                  node-version: 22
                   cache: npm
-            - run: npm ci
-            - run: npm run build
-    test:
-        runs-on: ubuntu-latest
-        name: Test project
-        steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
-              with:
-                  node-version: 20
-                  cache: npm
-            - run: npm ci
-            - run: npm test
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Audit production dependency surface
+              run: npm audit --omit=dev --audit-level=moderate
+
+            - name: Run tests
+              run: npm test -- --runInBand
+
+            - name: Run lint
+              run: npm run lint
+
+            - name: Check formatting
+              run: npm run check-format
+
+            - name: Build release assets
+              run: npm run build
+
+            - name: Validate release metadata and assets
+              run: npm run validate-release

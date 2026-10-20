@@ -1,19 +1,34 @@
 {
-	"name": "obsidian-ytranscript",
-	"version": "1.4.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"name": "video2knowledge-companion",
+	"version": "0.6.0",
+	"description": "Capture video transcripts and connect notes to a local Video2Knowledge service.",
 	"main": "main.js",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Eternal-HAC/video2knowledge-companion.git"
+	},
+	"homepage": "https://github.com/Eternal-HAC/video2knowledge-companion#readme",
+	"bugs": {
+		"url": "https://github.com/Eternal-HAC/video2knowledge-companion/issues"
+	},
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"version": "node version-bump.mjs",
 		"test": "jest",
 		"lint": "eslint src tests",
 		"check-format": "prettier --check src tests",
-		"format": "prettier --write src tests"
+		"format": "prettier --write src tests",
+		"validate-release": "node scripts/validate-release.mjs"
 	},
-	"keywords": [],
-	"author": "",
+	"keywords": [
+		"obsidian",
+		"youtube",
+		"bilibili",
+		"transcript",
+		"video2knowledge"
+	],
+	"author": "Eternal-HAC",
 	"license": "MIT",
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

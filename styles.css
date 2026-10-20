@@ -90,7 +90,9 @@ input.yt-transcript__search-input[type="text"] {
 	margin-bottom: var(--size-4-2);
 	border-radius: var(--radius-s);
 	border-left: 2px solid transparent;
-	transition: background-color 80ms ease, border-color 80ms ease;
+	transition:
+		background-color 80ms ease,
+		border-color 80ms ease;
 }
 
 .yt-transcript__transcript-block:hover {
@@ -135,4 +137,8 @@ input.yt-transcript__search-input[type="text"] {
 
 .yt-transcript__error-title {
 	margin-bottom: 5px;
+}
+
+input.yt-transcript__prompt-input[type="text"] {
+	width: 100%;
 }

@@ -1,10 +1,10 @@
 {
-	"id": "ytranscript",
-	"name": "YTranscript",
-	"version": "1.4.0",
+	"id": "video2knowledge-companion",
+	"name": "Video2Knowledge Companion",
+	"version": "0.6.0",
 	"minAppVersion": "0.15.0",
-	"description": "This is simple plugin to fetch transcription for Youtube.",
-	"author": "Łukasz Strzępek",
-	"authorUrl": "https://github.com/lstrzepek",
+	"description": "Capture YouTube transcripts and use a local Video2Knowledge service for transcription and summaries.",
+	"author": "Eternal-HAC",
+	"authorUrl": "https://github.com/Eternal-HAC",
 	"isDesktopOnly": false
 }

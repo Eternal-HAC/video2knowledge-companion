@@ -1,4 +1,4 @@
-import { App, Editor, Notice } from "obsidian";
+import { App, Editor, Notice, type TFile } from "obsidian";
 
 import {
 	formatTranscript,
@@ -10,8 +10,10 @@ import type { TranscriptConfig } from "src/youtube/types";
 import { extractYouTubeUrlFromText, isValidYouTubeUrl } from "src/youtube/url";
 
 import { getSelectedText } from "../editor-extensions";
+import { getYouTubeUrlFromFrontmatter } from "../frontmatter";
 import { obsidianHttp } from "../http";
 import { PromptModal } from "../modals/prompt-modal";
+import { replaceTranscriptRegion } from "../transcript-region";
 
 export interface InsertTranscriptOptions {
 	template?: FormatTemplate;
@@ -25,36 +27,93 @@ interface CommandContext {
 		country?: string;
 		timestampMod?: number;
 	};
+	showNotice?: (message: string) => void;
+}
+
+interface TargetKey {
+	path: string;
 }
 
 export class InsertTranscriptCommand {
-	constructor(private context: CommandContext) {}
+	private showNotice: (message: string) => void;
+	private inFlight = new Map<string, number>();
 
-	async execute(editor: Editor): Promise<void> {
-		await this.executeWithOptions(editor, {});
+	constructor(private context: CommandContext) {
+		this.showNotice =
+			context.showNotice ?? ((message) => new Notice(message));
+	}
+
+	async execute(
+		editor: Editor,
+		targetFile: TFile | null = null,
+		getCurrentFile: () => TFile | null = () => targetFile,
+	): Promise<void> {
+		await this.executeWithOptions(editor, {}, targetFile, getCurrentFile);
 	}
 
 	async executeWithOptions(
 		editor: Editor,
 		options: InsertTranscriptOptions,
+		targetFile: TFile | null = null,
+		getCurrentFile: () => TFile | null = () => targetFile,
 	): Promise<void> {
+		if (!targetFile) {
+			this.showNotice(
+				"Insert transcript failed: no target file provided.",
+			);
+			return;
+		}
+
+		const target: TargetKey = { path: targetFile.path };
+		const requestId = this.nextRequestId(target);
+
 		try {
-			const url = await this.getYouTubeUrlWithConfirmation(editor);
+			const url = await this.getYouTubeUrlWithConfirmation(
+				editor,
+				targetFile,
+			);
+
 			if (!url) return;
 
 			if (!isValidYouTubeUrl(url)) {
-				new Notice("Not a valid YouTube URL.");
+				this.showNotice("Not a valid YouTube URL.");
 				return;
 			}
 
+			if (!this.isStillInFlight(target, requestId)) return;
+			if (
+				getCurrentFile() !== targetFile ||
+				targetFile.path !== target.path
+			) {
+				this.showNotice(
+					"Insert transcript aborted: target note changed.",
+				);
+				return;
+			}
+			const editorSnapshot = editor.getValue();
 			const transcript = await fetchTranscript(
 				url,
 				obsidianHttp,
 				this.transcriptConfig(),
 			);
 
+			if (!this.isStillInFlight(target, requestId)) {
+				return;
+			}
+
+			if (
+				getCurrentFile() !== targetFile ||
+				targetFile.path !== target.path ||
+				editor.getValue() !== editorSnapshot
+			) {
+				this.showNotice(
+					"Insert transcript aborted: note changed while fetching.",
+				);
+				return;
+			}
+
 			if (!transcript?.lines?.length) {
-				new Notice("No transcript available for this video.");
+				this.showNotice("No transcript available for this video.");
 				return;
 			}
 
@@ -65,18 +124,29 @@ export class InsertTranscriptCommand {
 			);
 			if (!formatted.trim()) return;
 
-			editor.replaceRange(formatted, editor.getCursor());
+			replaceTranscriptRegion(editor, formatted, (reason) =>
+				this.showNotice(`Insert transcript failed: ${reason}`),
+			);
 		} catch (error) {
+			if (!this.isStillInFlight(target, requestId)) return;
 			const message =
 				error instanceof Error ? error.message : "Unknown error";
-			new Notice(`Insert transcript failed: ${message}`);
+			this.showNotice(`Insert transcript failed: ${message}`);
 		}
+	}
+
+	detectYouTubeUrl(
+		editor: Editor,
+		targetFile: TFile | null = null,
+	): Promise<string | null> {
+		return this.detectUrl(editor, targetFile);
 	}
 
 	private async getYouTubeUrlWithConfirmation(
 		editor: Editor,
+		targetFile: TFile | null,
 	): Promise<string | null> {
-		const detectedUrl = await this.detectYouTubeUrl(editor);
+		const detectedUrl = await this.detectUrl(editor, targetFile);
 
 		try {
 			const prompt = new PromptModal(
@@ -92,11 +162,22 @@ export class InsertTranscriptCommand {
 		}
 	}
 
-	private async detectYouTubeUrl(editor: Editor): Promise<string | null> {
+	private async detectUrl(
+		editor: Editor,
+		targetFile: TFile | null,
+	): Promise<string | null> {
+		const frontmatterUrl = this.getUrlFromFrontmatter(targetFile);
+		if (frontmatterUrl) return frontmatterUrl;
+
 		const selectionUrl = this.getUrlFromSelection(editor);
 		if (selectionUrl) return selectionUrl;
 
 		return this.getUrlFromClipboard();
+	}
+
+	private getUrlFromFrontmatter(targetFile: TFile | null): string | null {
+		if (!targetFile) return null;
+		return getYouTubeUrlFromFrontmatter(this.context.app, targetFile);
 	}
 
 	private getUrlFromSelection(editor: Editor): string | null {
@@ -136,5 +217,15 @@ export class InsertTranscriptCommand {
 				this.context.settings?.timestampMod ??
 				5,
 		};
+	}
+
+	private nextRequestId(target: TargetKey): number {
+		const id = (this.inFlight.get(target.path) ?? 0) + 1;
+		this.inFlight.set(target.path, id);
+		return id;
+	}
+
+	private isStillInFlight(target: TargetKey, requestId: number): boolean {
+		return this.inFlight.get(target.path) === requestId;
 	}
 }

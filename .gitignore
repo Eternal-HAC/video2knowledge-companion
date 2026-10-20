@@ -1,22 +1,30 @@
-# vscode
-.vscode 
+# VS Code
+.vscode
 
-# Intellij
+# IntelliJ
 *.iml
 .idea
 
 # npm
 node_modules
+coverage
 
-# Don't include the compiled main.js file in the repo.
-# They should be uploaded to GitHub releases instead.
+# Local runtime and generated release bundles
+.omx/
+.runtime/
+*.zip
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Release assets are uploaded separately
 main.js
-
-# Exclude sourcemaps
 *.map
 
-# obsidian
+# Obsidian plugin settings
 data.json
 
-# Exclude macOS Finder (System Explorer) View States
+# macOS Finder view state
 .DS_Store
