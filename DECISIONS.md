@@ -161,3 +161,4 @@
 6. **格式基线**：为让公开 CI 从首个提交开始可通过，对 `src/` 与 `tests/` 的 19 个上游存量文件执行一次纯机械 Prettier 格式化；必须在格式化后重新运行完整测试、lint 和 build，确认无行为变化。
 7. **依赖审计**：锁文件在既有 semver 范围内更新 39 个包，清除 critical/high/low 报告；生产依赖审计为 0。剩余 20 个 moderate 全部位于 Jest/ts-jest 覆盖率工具链，npm 只给出把 ts-jest 强制降级到 27 的破坏性方案，因此拒绝 `--force`。CI 使用只读 token 且不注入 secrets，并将 `npm audit --omit=dev --audit-level=moderate` 作为发布硬门。
 8. **GitHub 安全设置**：公开仓库保留 secret scanning，并启用 vulnerability alerts；不启用自动安全修复，避免在没有人工审查时自动创建依赖 PR。
+9. **公开告警处置**：Dependabot 告警 #1 是开发依赖链 `ts-jest -> Jest coverage -> js-yaml -> argparse -> sprintf-js@1.0.3` 中的中危拒绝服务问题（GHSA-hp3w-g68c-fv3c）。该依赖不进入插件运行时或发布资产，生产依赖审计仍为 0；GitHub 当前标记无可用修复版本，因此保持告警开放并等待上游发布，不降级测试栈、不关闭或误标告警。

@@ -54,6 +54,8 @@ v0.6 公开仓库基线已建立：产品身份、发布文档、最小权限 CI
 - [x] v0.6 发布候选静态验收：构建包只含 `main.js`、`manifest.json`、`styles.css`，三个文件与仓库构建产物 SHA-256 一致；ZIP 内容无多余文件。
 - [x] 首个本项目公开基线 `7263ec7` 已推送到 `origin/main`；GitHub CI run `39459466784` 的依赖安装、生产依赖审计、402 项测试、lint、格式、build 和发行校验全部通过。
 - [x] GitHub secret scanning 当前为 0 告警；已启用仓库 vulnerability alerts，未启用自动安全修复或自动建 PR。
+- [x] Dependabot 告警 #1 已复核：`sprintf-js@1.0.3` 仅由 Jest/ts-jest 开发覆盖率链间接引入，严重度为 moderate，GitHub 当前没有可用修复版本。告警保持开放，未降级测试栈、未关闭或误标告警；生产依赖审计仍为 0。
+- [x] 文档证据提交 `b34de40` 的 GitHub CI run `39459806935` 已完成，402 项测试、lint、格式、build、生产依赖审计和发行校验全部通过。
 
 ## 待确认
 
