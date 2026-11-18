@@ -13,6 +13,10 @@ import { fetchTranscript } from "src/youtube/fetch";
 import type { TranscriptConfig } from "src/youtube/types";
 
 import { isValidYouTubeUrl } from "src/youtube/url";
+import {
+	checkLocalServiceConnection,
+	formatLocalServiceConnectionResult,
+} from "src/video2knowledge/connection-check";
 
 import {
 	DEFAULT_ASR_SETTINGS,
@@ -24,7 +28,12 @@ import { InsertDeepSeekSummaryCommand } from "./commands/insert-deepseek-summary
 import { InsertTranscriptCommand } from "./commands/insert-transcript";
 import { getSelectedText } from "./editor-extensions";
 import { obsidianHttp } from "./http";
+import {
+	createTrackedLocalTaskProgressFactory,
+	LocalTaskStatusTracker,
+} from "./local-task-progress";
 import { PromptModal } from "./modals/prompt-modal";
+import { obsidianVideo2KnowledgeTransport } from "./video2knowledge-transport";
 import { TRANSCRIPT_TYPE_VIEW, TranscriptView } from "./views/transcript-view";
 
 type OpenLocation = "right-sidebar" | "left-sidebar" | "tab" | "split";
@@ -53,17 +62,36 @@ export default class YTranscriptPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		const statusBarItem = this.addStatusBarItem();
+		statusBarItem.setAttribute("role", "status");
+		statusBarItem.setAttribute("aria-live", "polite");
+		statusBarItem.style.display = "none";
+		const createProgress = createTrackedLocalTaskProgressFactory(
+			new LocalTaskStatusTracker({
+				setMessage: (message) => statusBarItem.setText(message),
+				setVisible: (visible) => {
+					statusBarItem.style.display = visible ? "" : "none";
+				},
+			}),
+		);
 
 		this.insertTranscriptCommand = new InsertTranscriptCommand(this);
-		this.insertAsrTranscriptCommand = new InsertAsrTranscriptCommand(this);
+		this.insertAsrTranscriptCommand = new InsertAsrTranscriptCommand({
+			app: this.app,
+			settings: this.settings,
+			createProgress,
+		});
 		this.insertLocalTranscriptCommand = new InsertAsrTranscriptCommand({
 			app: this.app,
 			settings: this.settings,
 			sourceMode: "supported",
+			createProgress,
 		});
-		this.insertDeepSeekSummaryCommand = new InsertDeepSeekSummaryCommand(
-			this,
-		);
+		this.insertDeepSeekSummaryCommand = new InsertDeepSeekSummaryCommand({
+			app: this.app,
+			settings: this.settings,
+			createProgress,
+		});
 
 		this.registerView(
 			TRANSCRIPT_TYPE_VIEW,
@@ -212,7 +240,7 @@ export default class YTranscriptPlugin extends Plugin {
 	}
 }
 
-class YTranscriptSettingTab extends PluginSettingTab {
+export class YTranscriptSettingTab extends PluginSettingTab {
 	plugin: YTranscriptPlugin;
 
 	constructor(app: App, plugin: YTranscriptPlugin) {
@@ -299,6 +327,26 @@ class YTranscriptSettingTab extends PluginSettingTab {
 						this.plugin.settings.video2KnowledgeBaseUrl = value;
 						await this.plugin.saveSettings();
 					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Test local service")
+			.setDesc(
+				"Check the loopback service identity and version without starting a transcription task.",
+			)
+			.addButton((button) =>
+				button.setButtonText("Test connection").onClick(async () => {
+					button.setDisabled(true);
+					try {
+						const result = await checkLocalServiceConnection(
+							this.plugin.settings.video2KnowledgeBaseUrl,
+							obsidianVideo2KnowledgeTransport,
+						);
+						new Notice(formatLocalServiceConnectionResult(result));
+					} finally {
+						button.setDisabled(false);
+					}
+				}),
 			);
 
 		new Setting(containerEl)

@@ -17,6 +17,13 @@ jest.mock("obsidian", () => ({
 		}
 		registerView() {}
 		addSettingTab() {}
+		addStatusBarItem() {
+			return {
+				style: { display: "" },
+				setAttribute: jest.fn(),
+				setText: jest.fn(),
+			};
+		}
 		async loadData() {
 			return null;
 		}
@@ -41,11 +48,17 @@ import {
 } from "src/obsidian/commands/insert-deepseek-summary";
 import { DEFAULT_ASR_SETTINGS } from "src/obsidian/commands/insert-asr-transcript";
 import YTranscriptPlugin from "src/obsidian/plugin";
+import type {
+	LocalTaskProgress,
+	LocalTaskProgressFactory,
+} from "src/obsidian/local-task-progress";
 import {
 	SummaryRunError,
 	Video2KnowledgeClientError,
+	type BilibiliPagesPreview,
 	type MarkdownSummary,
 	type StartSummaryRequest,
+	type TranscriptionTask,
 } from "src/video2knowledge/types";
 
 jest.mock("src/obsidian/modals/prompt-modal", () => ({
@@ -63,8 +76,18 @@ jest.mock("src/obsidian/modals/prompt-modal", () => ({
 		})),
 }));
 
+jest.mock("src/obsidian/modals/bilibili-pages-modal", () => ({
+	BilibiliPagesModal: jest.fn().mockImplementation(() => ({
+		openAndGetValue: async () => [2],
+	})),
+}));
+
+import { BilibiliPagesModal } from "src/obsidian/modals/bilibili-pages-modal";
+
 const URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const URL_B = "https://youtu.be/bbbbbbbbbbb";
+const BILIBILI_URL = "https://www.bilibili.com/video/BV1DKbxzjEz9";
+const BILIBILI_URL_P2 = BILIBILI_URL + "?p=2";
 const SUMMARY: MarkdownSummary = {
 	taskId: "summary-1",
 	format: "markdown",
@@ -86,6 +109,7 @@ beforeEach(() => {
 	promptCancelled = false;
 	promptInitialValues = [];
 	clipboardText = "";
+	jest.mocked(BilibiliPagesModal).mockClear();
 });
 
 function deferred() {
@@ -113,7 +137,10 @@ function makeRunner(
 ) {
 	const calls: Array<{
 		request: StartSummaryRequest;
-		options?: { isCancelled?: () => boolean };
+		options?: {
+			isCancelled?: () => boolean;
+			onProgress?: (task: TranscriptionTask) => void;
+		};
 	}> = [];
 	const runner: SummaryRunnerLike = {
 		run: jest.fn(async (request, options) => {
@@ -126,6 +153,14 @@ function makeRunner(
 		}),
 	};
 	return { runner, calls };
+}
+
+function makeProgress(): LocalTaskProgress {
+	return {
+		isCancelled: jest.fn(() => false),
+		update: jest.fn(),
+		close: jest.fn(),
+	};
 }
 
 function makeEditor(initialText = "", selection = ""): Editor {
@@ -175,22 +210,80 @@ function buildCommand(
 		app?: App;
 		runner?: SummaryRunnerLike;
 		desktop?: boolean;
+		createProgress?: LocalTaskProgressFactory;
+		previewBilibiliPages?: (
+			baseUrl: string,
+			videoUrl: string,
+		) => Promise<BilibiliPagesPreview>;
+		selectBilibiliPages?: (
+			preview: BilibiliPagesPreview,
+			defaultPages: number[],
+		) => Promise<number[] | null>;
 	} = {},
 ) {
 	const notices: string[] = [];
 	const runner = options.runner ?? makeRunner().runner;
 	const createRunner = jest.fn(() => runner);
+	const progress = makeProgress();
+	const createProgress = jest.fn(options.createProgress ?? (() => progress));
 	const command = new InsertDeepSeekSummaryCommand({
 		app: options.app ?? makeApp({ source: URL }),
 		settings: { ...DEFAULT_ASR_SETTINGS },
 		createRunner,
 		showNotice: (message) => notices.push(message),
+		createProgress,
 		isDesktopApp: () => options.desktop ?? true,
+		previewBilibiliPages: options.previewBilibiliPages,
+		selectBilibiliPages: options.selectBilibiliPages,
 	});
-	return { command, createRunner, notices };
+	return {
+		command,
+		createRunner,
+		createProgress,
+		notices,
+		progress,
+	};
 }
 
 describe("InsertDeepSeekSummaryCommand", () => {
+	it("reports progress and closes the progress surface", async () => {
+		const { runner, calls } = makeRunner();
+		const { command, createProgress, progress } = buildCommand({ runner });
+		await command.execute(makeEditor("# Note"), file());
+		calls[0].options?.onProgress?.({
+			taskId: "summary-1",
+			status: "processing",
+			progress: 25,
+		});
+		expect(createProgress).toHaveBeenCalledWith("summary");
+		expect(progress.update).toHaveBeenCalledWith({
+			taskId: "summary-1",
+			status: "processing",
+			progress: 25,
+		});
+		expect(progress.close).toHaveBeenCalledTimes(1);
+	});
+
+	it("maps the progress cancel action to local summary cancellation", async () => {
+		const progress = makeProgress();
+		(progress.isCancelled as jest.Mock).mockReturnValue(true);
+		const runner: SummaryRunnerLike = {
+			run: jest.fn(async (_request, options) => {
+				expect(options?.isCancelled?.()).toBe(true);
+				throw new SummaryRunError("cancelled", "unsafe", "summary-1");
+			}),
+		};
+		const { command, notices } = buildCommand({
+			runner,
+			createProgress: () => progress,
+		});
+		const editor = makeEditor("# Note");
+		await command.execute(editor, file());
+		expect(notices[0]).toContain("stopped local waiting");
+		expect(progress.close).toHaveBeenCalledTimes(1);
+		expect(editor.getValue()).toBe("# Note");
+	});
+
 	it("rejects mobile before prompting or creating a runner", async () => {
 		const { command, createRunner, notices } = buildCommand({
 			desktop: false,
@@ -216,6 +309,198 @@ describe("InsertDeepSeekSummaryCommand", () => {
 			useGpu: false,
 		});
 		expect(app.workspace.getActiveFile).not.toHaveBeenCalled();
+	});
+
+	it("keeps the YouTube summary path free of Bilibili preview calls", async () => {
+		const previewBilibiliPages = jest.fn();
+		const { runner, calls } = makeRunner();
+		const { command } = buildCommand({ runner, previewBilibiliPages });
+		await command.execute(makeEditor("# Note"), file());
+		expect(previewBilibiliPages).not.toHaveBeenCalled();
+		expect(calls[0].request).not.toHaveProperty("bilibiliPages");
+	});
+
+	it("auto-selects a single Bilibili part from frontmatter", async () => {
+		promptValue = "";
+		const preview: BilibiliPagesPreview = {
+			title: "Single part",
+			totalPages: 1,
+			pages: [{ page: 1, part: "Main", duration: 61 }],
+			previousPages: null,
+		};
+		const previewBilibiliPages = jest.fn(async () => preview);
+		const selectBilibiliPages = jest.fn();
+		const { runner, calls } = makeRunner();
+		const { command } = buildCommand({
+			app: makeApp({ source: BILIBILI_URL }),
+			runner,
+			previewBilibiliPages,
+			selectBilibiliPages,
+		});
+		await command.execute(makeEditor("# Note"), file());
+		expect(promptInitialValues).toEqual([BILIBILI_URL]);
+		expect(previewBilibiliPages).toHaveBeenCalledWith(
+			"http://127.0.0.1:8000",
+			BILIBILI_URL,
+		);
+		expect(selectBilibiliPages).not.toHaveBeenCalled();
+		expect(calls[0].request.bilibiliPages).toEqual([1]);
+	});
+
+	it("uses previous pages as Bilibili multi-part defaults and sends the selection", async () => {
+		promptValue = BILIBILI_URL_P2;
+		const preview: BilibiliPagesPreview = {
+			title: "Multi-part video",
+			totalPages: 3,
+			pages: [
+				{ page: 1, part: "One", duration: 10 },
+				{ page: 2, part: "Two", duration: 20 },
+				{ page: 3, part: "Three", duration: 30 },
+			],
+			previousPages: [3, 1],
+		};
+		const selectBilibiliPages = jest.fn(async () => [2, 3]);
+		const { runner, calls } = makeRunner();
+		const { command } = buildCommand({
+			runner,
+			previewBilibiliPages: async () => preview,
+			selectBilibiliPages,
+		});
+		await command.execute(makeEditor("# Note"), file());
+		expect(selectBilibiliPages).toHaveBeenCalledWith(preview, [3, 1]);
+		expect(calls[0].request.bilibiliPages).toEqual([2, 3]);
+	});
+
+	it("labels the default Bilibili selector for summary work", async () => {
+		promptValue = BILIBILI_URL_P2;
+		const preview: BilibiliPagesPreview = {
+			title: "Multi-part video",
+			totalPages: 2,
+			pages: [
+				{ page: 1, part: "One", duration: 10 },
+				{ page: 2, part: "Two", duration: 20 },
+			],
+			previousPages: null,
+		};
+		const { runner, calls } = makeRunner();
+		const app = makeApp();
+		const { command } = buildCommand({
+			app,
+			runner,
+			previewBilibiliPages: async () => preview,
+		});
+		await command.execute(makeEditor("# Note"), file());
+		expect(BilibiliPagesModal).toHaveBeenCalledWith(
+			app,
+			preview,
+			[2],
+			"Summarize selected parts",
+		);
+		expect(calls[0].request.bilibiliPages).toEqual([2]);
+	});
+
+	it("stops before submission when Bilibili part selection is cancelled", async () => {
+		promptValue = BILIBILI_URL;
+		const preview: BilibiliPagesPreview = {
+			title: "Multi-part video",
+			totalPages: 2,
+			pages: [
+				{ page: 1, part: "One", duration: 10 },
+				{ page: 2, part: "Two", duration: 20 },
+			],
+			previousPages: null,
+		};
+		const { runner, calls } = makeRunner();
+		const { command, notices } = buildCommand({
+			runner,
+			previewBilibiliPages: async () => preview,
+			selectBilibiliPages: async () => null,
+		});
+		const editor = makeEditor("# Note");
+		await command.execute(editor, file());
+		expect(calls).toHaveLength(0);
+		expect(notices).toEqual([]);
+		expect(editor.getValue()).toBe("# Note");
+	});
+
+	it("stops before submission when the note changes during Bilibili preview", async () => {
+		promptValue = BILIBILI_URL;
+		const editor = makeEditor("# Note");
+		const { runner, calls } = makeRunner();
+		const { command, notices } = buildCommand({
+			runner,
+			previewBilibiliPages: async () => {
+				editor.replaceRange(" changed", { line: 0, ch: 6 });
+				return {
+					title: "Single part",
+					totalPages: 1,
+					pages: [{ page: 1, part: "Main", duration: 61 }],
+					previousPages: null,
+				};
+			},
+		});
+		await command.execute(editor, file());
+		expect(calls).toHaveLength(0);
+		expect(notices[0]).toContain("target note changed");
+		expect(editor.getValue()).toBe("# Note changed");
+	});
+
+	it("stops before submission when the note changes during Bilibili selection", async () => {
+		promptValue = BILIBILI_URL;
+		const editor = makeEditor("# Note");
+		const preview: BilibiliPagesPreview = {
+			title: "Multi-part video",
+			totalPages: 2,
+			pages: [
+				{ page: 1, part: "One", duration: 10 },
+				{ page: 2, part: "Two", duration: 20 },
+			],
+			previousPages: null,
+		};
+		const { runner, calls } = makeRunner();
+		const { command, notices } = buildCommand({
+			runner,
+			previewBilibiliPages: async () => preview,
+			selectBilibiliPages: async () => {
+				editor.replaceRange(" changed", { line: 0, ch: 6 });
+				return [2];
+			},
+		});
+		await command.execute(editor, file());
+		expect(calls).toHaveLength(0);
+		expect(notices[0]).toContain("target note changed");
+		expect(editor.getValue()).toBe("# Note changed");
+	});
+
+	it("uses a stable message for unsupported video input", async () => {
+		promptValue = "https://example.com/video";
+		const { runner, calls } = makeRunner();
+		const { command, notices } = buildCommand({ runner });
+		await command.execute(makeEditor("# Note"), file());
+		expect(calls).toHaveLength(0);
+		expect(notices).toEqual(["Not a supported YouTube or Bilibili URL."]);
+	});
+
+	it("maps Bilibili preview failures without misreporting DeepSeek configuration", async () => {
+		promptValue = BILIBILI_URL;
+		const { runner, calls } = makeRunner();
+		const { command, notices } = buildCommand({
+			runner,
+			previewBilibiliPages: async () => {
+				throw new Video2KnowledgeClientError(
+					"http-error",
+					"secret backend detail sk-leak",
+					{ status: 400 },
+				);
+			},
+		});
+		await command.execute(makeEditor("# Note"), file());
+		expect(calls).toHaveLength(0);
+		expect(notices).toEqual([
+			"Could not load Bilibili video parts (HTTP 400).",
+		]);
+		expect(notices[0]).not.toContain("DeepSeek");
+		expect(notices[0]).not.toContain("secret");
 	});
 
 	it("inserts summary after transcript and preserves canaries", async () => {

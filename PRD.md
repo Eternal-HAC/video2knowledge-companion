@@ -50,18 +50,27 @@ Video2Knowledge Companion 帮助用户把 YouTube 或公开 Bilibili 视频的�
 - Bilibili 只通过本机 loopback Video2Knowledge 服务接入，不扩展上游 YouTube 直连字幕命令。
 - 首版只保证公开、无需登录的 `bilibili.com/video`、BV/av 分享文本与 `b23.tv` 链接；私有、会员、地区限制和必须登录的字幕不属于保证范围。
 - 插件不接收、保存或发送 SESSDATA、bili_jct、buvid3 等 Bilibili 凭据；无 Cookie 不可用时显示稳定错误并停止。
-- Phase A 先提供平台中立的本地转录命令，同时保留现有 YouTube 命令和命令 ID；Bilibili 摘要在转录路径真实验收后再接入。
+- Phase A 提供平台中立的本地转录命令，同时保留现有 YouTube 命令和命令 ID；Phase B 让现有 DeepSeek 摘要命令接受公开 Bilibili 视频并复用同一套分 P 预览与显式选择。
 - 平台中立命令固定为 `insert-video-transcript-local`（Insert video transcript using local service）；YouTube 请求保持原五字段，Bilibili 先调用 `/api/bili-pages`，转录时只额外发送明确选择的 `bilibili_pages`。
 - Bilibili 多 P 必须先调用本地后端预览页清单，并由用户显式选择至少一个分 P；上次明确选择优先，其次采用 URL 的 `?p=N`，其余情况默认不选择。
 - 后端返回的带时间戳 Markdown 继续写入现有 `YTranscript` 受控区域，沿用目标快照、并发保护和 fail closed 规则。
+- Bilibili 摘要继续写入独立 `YSummary` 区域，只向 `/api/summarize` 额外发送明确选择的 `bilibili_pages`；不增加 Cookie、Key、自由提示词或自动重试。
 - Bilibili 网页接口属于可能变化的非发布契约；插件只依赖本地后端稳定 JSON 契约，不直接调用 Bilibili API 或复制 yt-dlp 逻辑。
+
+## v0.7 Beta Hardening 范围
+
+- 设置页提供显式本地服务连接测试，只验证 loopback 地址、服务身份和版本，不启动转录、不读取凭据。
+- 本地转录和 DeepSeek 摘要显示持久进度提示；只显示有限状态与合法百分比，不展示后端自由文本、任务 ID、路径或凭据。
+- 桌面状态栏同步显示当前本地任务；并发任务只显示任务数量，单任务恢复显示其有限状态，任一任务结束不得误隐藏仍在运行的任务。
+- 提供“停止等待”入口；该操作只停止插件轮询，必须明确提示后端任务可能继续运行。
+- 为插件命令注册、设置迁移、设置保存、连接按钮和卸载清理增加自动化测试。
+- 文档给出可复现的 Windows 后端安装、兼容版本、首次模型下载和故障排查路径。
+- 本阶段不改变后端任务、不新增凭据字段、不自动重试付费摘要、不创建正式 Release。
 
 ## 后续阶段
 
-1. v0.3/v0.5 隔离 Vault 真实 Obsidian 命令验收。
-2. v0.4 真实 DeepSeek 验收。
-3. v0.5 Bilibili Phase B 可选 DeepSeek 摘要。
-4. v0.6 发布候选、GitHub Release 与社区目录提交。
+1. 在后端补齐结果页脚的解析后模型名显示：使用 `LLMSummarizer.model` 已解析出的实际模型，不再把请求中的空 `model` 显示为“未指定模型”；先增加默认模型回归测试。当前后端目标文件存在外部未提交改动，插件仓库不得叠加修改。
+2. GitHub Release、Web Clipper 手工验收与社区目录提交。
 
 ## 明确不做
 

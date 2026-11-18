@@ -5,6 +5,7 @@ import type { BilibiliPagesPreview } from "src/video2knowledge/types";
 export class BilibiliPagesModal extends Modal {
 	private readonly preview: BilibiliPagesPreview;
 	private readonly selected: Set<number>;
+	private readonly submitButtonText: string;
 	private resolve: ((value: number[] | null) => void) | null = null;
 	private settled = false;
 
@@ -12,10 +13,12 @@ export class BilibiliPagesModal extends Modal {
 		app: App,
 		preview: BilibiliPagesPreview,
 		defaultPages: number[],
+		submitButtonText = "Transcribe selected parts",
 	) {
 		super(app);
 		this.preview = preview;
 		this.selected = new Set(defaultPages);
+		this.submitButtonText = submitButtonText;
 	}
 
 	onOpen(): void {
@@ -50,7 +53,7 @@ export class BilibiliPagesModal extends Modal {
 			.setButtonText("Cancel")
 			.onClick(() => this.finish(null));
 		submitButton = new ButtonComponent(buttons)
-			.setButtonText("Transcribe selected parts")
+			.setButtonText(this.submitButtonText)
 			.setCta()
 			.onClick(() => {
 				const selected = this.preview.pages

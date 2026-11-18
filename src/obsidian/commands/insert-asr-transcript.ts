@@ -8,6 +8,7 @@ import {
 	type BilibiliPagesPreview,
 	type MarkdownTranscript,
 	type StartTranscriptionRequest,
+	type TranscriptionTask,
 } from "src/video2knowledge/types";
 import {
 	classifySupportedVideoUrl,
@@ -18,6 +19,11 @@ import { extractYouTubeUrlFromText, isValidYouTubeUrl } from "src/youtube/url";
 
 import { getSelectedText } from "../editor-extensions";
 import { getSourceUrlFromFrontmatter } from "../frontmatter";
+import {
+	createLocalTaskProgress,
+	type LocalTaskProgress,
+	type LocalTaskProgressFactory,
+} from "../local-task-progress";
 import { BilibiliPagesModal } from "../modals/bilibili-pages-modal";
 import { PromptModal } from "../modals/prompt-modal";
 import { replaceTranscriptRegion } from "../transcript-region";
@@ -46,7 +52,10 @@ export function normalizeAsrWhisperModel(value: string): string {
 export interface TranscriptionRunnerLike {
 	run(
 		request: StartTranscriptionRequest,
-		options?: { isCancelled?: () => boolean },
+		options?: {
+			isCancelled?: () => boolean;
+			onProgress?: (task: TranscriptionTask) => void;
+		},
 	): Promise<MarkdownTranscript>;
 }
 
@@ -55,6 +64,7 @@ export interface InsertAsrTranscriptContext {
 	settings: InsertAsrTranscriptSettings;
 	createRunner?: (baseUrl: string) => TranscriptionRunnerLike;
 	showNotice?: (message: string, duration?: number) => void;
+	createProgress?: LocalTaskProgressFactory;
 	isDesktopApp?: () => boolean;
 	sourceMode?: "youtube-only" | "supported";
 	previewBilibiliPages?: (
@@ -151,6 +161,7 @@ export class InsertAsrTranscriptCommand {
 	private readonly settings: InsertAsrTranscriptSettings;
 	private readonly createRunner: (baseUrl: string) => TranscriptionRunnerLike;
 	private readonly showNotice: (message: string, duration?: number) => void;
+	private readonly createProgress: LocalTaskProgressFactory;
 	private readonly isDesktopApp: () => boolean;
 	private readonly sourceMode: "youtube-only" | "supported";
 	private readonly previewBilibiliPages: (
@@ -170,6 +181,7 @@ export class InsertAsrTranscriptCommand {
 		this.showNotice =
 			context.showNotice ??
 			((message, duration) => new Notice(message, duration));
+		this.createProgress = context.createProgress ?? createLocalTaskProgress;
 		this.isDesktopApp =
 			context.isDesktopApp ?? (() => Platform.isDesktopApp);
 		this.sourceMode = context.sourceMode ?? "youtube-only";
@@ -202,6 +214,7 @@ export class InsertAsrTranscriptCommand {
 		const target: TargetKey = { path: targetFile.path };
 		const requestId = this.nextRequestId(target);
 		let editorSnapshot: string | null = null;
+		let progress: LocalTaskProgress | null = null;
 
 		try {
 			const url = await this.getUrlWithConfirmation(editor, targetFile);
@@ -270,7 +283,9 @@ export class InsertAsrTranscriptCommand {
 			const runner = this.createRunner(
 				this.settings.video2KnowledgeBaseUrl,
 			);
+			progress = this.createProgress("transcription");
 			const isCancelled = () =>
+				progress?.isCancelled() === true ||
 				!this.isStillInFlight(target, requestId) ||
 				this.isTargetStale(targetFile, target, getCurrentFile) ||
 				editor.getValue() !== snapshot;
@@ -279,6 +294,7 @@ export class InsertAsrTranscriptCommand {
 				this.buildRequest(url, bilibiliPages),
 				{
 					isCancelled,
+					onProgress: (task) => progress?.update(task),
 				},
 			);
 
@@ -311,6 +327,8 @@ export class InsertAsrTranscriptCommand {
 				return;
 			}
 			this.showNotice(mapRunFailure(error));
+		} finally {
+			progress?.close();
 		}
 	}
 

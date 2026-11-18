@@ -48,6 +48,7 @@ export interface StartSummaryRequest {
 	preferSubtitles?: boolean;
 	whisperModel?: string;
 	useGpu?: boolean;
+	bilibiliPages?: number[];
 }
 
 export interface StartSummaryResponse {

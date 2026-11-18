@@ -17,6 +17,13 @@ jest.mock("obsidian", () => ({
 		}
 		registerView() {}
 		addSettingTab() {}
+		addStatusBarItem() {
+			return {
+				style: { display: "" },
+				setAttribute: jest.fn(),
+				setText: jest.fn(),
+			};
+		}
 		async loadData() {
 			return null;
 		}
@@ -49,12 +56,17 @@ import {
 	type TranscriptionRunnerLike,
 } from "src/obsidian/commands/insert-asr-transcript";
 import YTranscriptPlugin, { DEFAULT_SETTINGS } from "src/obsidian/plugin";
+import type {
+	LocalTaskProgress,
+	LocalTaskProgressFactory,
+} from "src/obsidian/local-task-progress";
 import {
 	TranscriptionRunError,
 	Video2KnowledgeClientError,
 	type BilibiliPagesPreview,
 	type MarkdownTranscript,
 	type StartTranscriptionRequest,
+	type TranscriptionTask,
 } from "src/video2knowledge/types";
 
 jest.mock("src/obsidian/modals/prompt-modal", () => ({
@@ -136,7 +148,18 @@ beforeEach(() => {
 
 interface RunCall {
 	request: StartTranscriptionRequest;
-	options?: { isCancelled?: () => boolean };
+	options?: {
+		isCancelled?: () => boolean;
+		onProgress?: (task: TranscriptionTask) => void;
+	};
+}
+
+function makeProgress(): LocalTaskProgress {
+	return {
+		isCancelled: jest.fn(() => false),
+		update: jest.fn(),
+		close: jest.fn(),
+	};
 }
 
 function deferred() {
@@ -248,6 +271,7 @@ function buildCommand(options: {
 		preview: BilibiliPagesPreview,
 		defaultPages: number[],
 	) => Promise<number[] | null>;
+	createProgress?: LocalTaskProgressFactory;
 }) {
 	const notices: string[] = [];
 	const runner = options.runner ?? makeRunner([MARKDOWN]).runner;
@@ -256,20 +280,75 @@ function buildCommand(options: {
 		...DEFAULT_ASR_SETTINGS,
 		...options.settings,
 	};
+	const progress = makeProgress();
+	const createProgress = jest.fn(options.createProgress ?? (() => progress));
 	const command = new InsertAsrTranscriptCommand({
 		app: options.app,
 		settings,
 		createRunner,
 		showNotice: (message: string) => notices.push(message),
+		createProgress,
 		isDesktopApp: () => options.desktop ?? true,
 		sourceMode: options.sourceMode,
 		previewBilibiliPages: options.previewBilibiliPages,
 		selectBilibiliPages: options.selectBilibiliPages,
 	});
-	return { command, createRunner, notices, settings };
+	return {
+		command,
+		createRunner,
+		createProgress,
+		notices,
+		progress,
+		settings,
+	};
 }
 
 describe("InsertAsrTranscriptCommand", () => {
+	it("reports bounded progress and closes the progress surface", async () => {
+		const { runner, runCalls } = runnerReturning();
+		const { command, createProgress, progress } = buildCommand({
+			app: makeApp().app,
+			runner,
+		});
+		await command.execute(
+			makeEditor("# Note"),
+			makeTargetFile("note-a.md"),
+		);
+		runCalls[0].options?.onProgress?.({
+			taskId: "t-1",
+			status: "processing",
+			progress: 50,
+		});
+		expect(createProgress).toHaveBeenCalledWith("transcription");
+		expect(progress.update).toHaveBeenCalledWith({
+			taskId: "t-1",
+			status: "processing",
+			progress: 50,
+		});
+		expect(progress.close).toHaveBeenCalledTimes(1);
+	});
+
+	it("maps the progress cancel action to local runner cancellation", async () => {
+		const progress = makeProgress();
+		(progress.isCancelled as jest.Mock).mockReturnValue(true);
+		const runner: TranscriptionRunnerLike = {
+			run: jest.fn(async (_request, options) => {
+				expect(options?.isCancelled?.()).toBe(true);
+				throw new TranscriptionRunError("cancelled", "unsafe", "t-1");
+			}),
+		};
+		const { command, notices } = buildCommand({
+			app: makeApp().app,
+			runner,
+			createProgress: () => progress,
+		});
+		const editor = makeEditor("# Note");
+		await command.execute(editor, makeTargetFile("note-a.md"));
+		expect(notices).toEqual([M.cancelled]);
+		expect(progress.close).toHaveBeenCalledTimes(1);
+		expect(editor.getValue()).toBe("# Note");
+	});
+
 	it("rejects mobile immediately without prompting, running, or reading the clipboard", async () => {
 		const { command, createRunner, notices } = buildCommand({
 			app: makeApp().app,

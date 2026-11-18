@@ -4,7 +4,7 @@ Video2Knowledge Companion captures video transcripts in your notes. It can fetch
 
 The plugin preserves user-authored content by writing generated text only inside controlled transcript and summary regions.
 
-> Status: pre-release. The repository is public for review, but no GitHub Release or Obsidian Community Plugins submission has been published yet.
+Install version 0.7.0 manually from [GitHub Releases](https://github.com/Eternal-HAC/video2knowledge-companion/releases/tag/0.7.0).
 
 ## Features
 
@@ -12,6 +12,7 @@ The plugin preserves user-authored content by writing generated text only inside
 - Insert public YouTube captions into the current note.
 - Keep the original upstream transcript side panel and legacy YouTube commands.
 - Use a loopback-only Video2Knowledge service for local transcription.
+- Test the local service identity and version from the plugin settings.
 - Transcribe supported public YouTube and Bilibili videos through the local service.
 - Preview Bilibili parts and explicitly choose which parts to process.
 - Insert an optional detailed DeepSeek summary after the transcript.
@@ -36,9 +37,11 @@ Supports public YouTube and Bilibili URLs. For a multi-part Bilibili video, the 
 
 This command requires the desktop app and a running local service.
 
+Local-service commands show a persistent progress notice and mirror bounded progress in the desktop status bar. Concurrent tasks are summarized by count so one completed task cannot hide another task that is still running. **Stop waiting** stops only the plugin's polling; it does not claim to cancel work already running in the backend.
+
 ### Insert DeepSeek summary using local service
 
-Requests a detailed Markdown note from the local service. The plugin sends an empty API-key field; credentials remain owned and resolved by the local service. The command never stores a DeepSeek key in the plugin.
+Requests a detailed Markdown note from the local service for a public YouTube or Bilibili video. Multi-part Bilibili videos use the same explicit part-selection flow as local transcription. The plugin sends an empty API-key field; credentials remain owned and resolved by the local service. The command never stores a DeepSeek key or Bilibili cookie in the plugin.
 
 This command requires the desktop app, a running local service, and DeepSeek configured in that service.
 
@@ -46,7 +49,7 @@ This command requires the desktop app, a running local service, and DeepSeek con
 
 ### Manual release installation
 
-After a release is published, download `main.js`, `manifest.json`, and `styles.css` from the same release and place them in:
+Download `main.js`, `manifest.json`, and `styles.css` from the same release and place them in:
 
 ```text
 <your-vault>/.obsidian/plugins/video2knowledge-companion/
@@ -97,7 +100,14 @@ The `YTranscript` marker name is retained for compatibility with notes created b
 
 ## Local service setup
 
-Install and run Video2Knowledge separately, then configure the service URL in the plugin settings. The default is:
+The validated Windows companion is [Video2Knowledge-next](https://github.com/Eternal-HAC/Video2Knowledge-next). The shortest setup path is:
+
+1. Download the Windows portable build from the [v1.4.2-v2k.1 release](https://github.com/Eternal-HAC/Video2Knowledge-next/releases/tag/v1.4.2-v2k.1).
+2. Start the portable application and leave its local service running.
+3. In Obsidian, open **Video2Knowledge Companion settings** and enter the loopback service URL.
+4. Select **Test connection**. A successful check reports the service version without starting a transcription task.
+
+The default URL is:
 
 ```text
 http://127.0.0.1:8000
@@ -105,7 +115,28 @@ http://127.0.0.1:8000
 
 Only loopback HTTP endpoints are accepted. The plugin does not accept credentials in the URL and does not expose settings for Bilibili cookies or LLM keys.
 
+If port 8000 is already occupied, the backend may select another local port. Enter the actual `127.0.0.1` port shown by the backend, then run **Test connection** again.
+
+The first Whisper transcription may download a model and take longer than later runs. Keep the backend open while the plugin displays task progress. Selecting **Stop waiting** stops local polling only; the backend task may continue and remain available in the backend application.
+
 Local service behavior, media downloads, model storage, provider configuration, and provider costs are managed by Video2Knowledge, outside this plugin.
+
+### Validated compatibility
+
+| Plugin baseline                        | Local service                                       | Validation                                                                                                     |
+| -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 0.6.0 plus current v0.7 hardening work | VideoToNo 1.4.2 / Video2Knowledge-next v1.4.2-v2k.1 | Health, YouTube subtitles, Whisper base ASR, public Bilibili single-part and explicit multi-part transcription |
+
+The client validates the service identity and response shapes. It does not treat an arbitrary HTTP server on the configured port as compatible. Other backend versions may work, but are not part of the current verified matrix.
+
+### Local service troubleshooting
+
+- **URL is invalid**: use plain HTTP with `127.0.0.1`, `localhost`, or `[::1]`; credentials and remote hosts are rejected.
+- **Cannot reach the service**: start Video2Knowledge, confirm its local port, then use **Test connection**.
+- **Incompatible response**: confirm the port belongs to Video2Knowledge and use a validated backend version.
+- **HTTP error**: inspect the backend application locally. The plugin intentionally shows only the status code and does not copy backend details into the note.
+- **Task timed out or waiting was stopped**: the backend task may still be running. Check it in Video2Knowledge before submitting a duplicate paid summary request.
+- **DeepSeek is not configured**: configure and test DeepSeek inside Video2Knowledge. The plugin never accepts or stores the API key.
 
 ## Network and privacy
 

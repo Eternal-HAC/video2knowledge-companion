@@ -163,3 +163,70 @@
 8. **GitHub 安全设置**：公开仓库保留 secret scanning，并启用 vulnerability alerts；不启用自动安全修复，避免在没有人工审查时自动创建依赖 PR。
 9. **公开告警处置**：Dependabot 告警 #1 是开发依赖链 `ts-jest -> Jest coverage -> js-yaml -> argparse -> sprintf-js@1.0.3` 中的中危拒绝服务问题（GHSA-hp3w-g68c-fv3c）。该依赖不进入插件运行时或发布资产，生产依赖审计仍为 0；GitHub 当前标记无可用修复版本，因此保持告警开放并等待上游发布，不降级测试栈、不关闭或误标告警。
 10. **Runner 基线**：GitHub 在首轮 CI 中提示 `ubuntu-latest` 将迁移到 Ubuntu 26。CI 与人工 Release workflow 固定使用 `ubuntu-24.04`，避免同一源码因托管 runner 自动迁移产生未经审查的环境变化。
+
+## 2026-10-21 v0.7 Beta Hardening
+
+1. **连接诊断**：设置页只调用现有 loopback `GET /api/health`，验证 `VideoToNo` 身份和非空版本；结果压缩为 connected、invalid-url、unreachable、http-error、incompatible，不显示响应正文或异常原文。
+2. **进度披露**：插件只显示任务的固定状态和范围为 0–100 的有限百分比；`progress_message`、`step_name`、task ID 和后端错误不进入进度 UI。
+3. **停止语义**：“Stop waiting”只设置当前插件请求的本地取消谓词。插件不调用后端取消接口，并明确提示任务可能继续，避免对付费摘要进行含义不明的自动重试。
+4. **兼容性**：进度 Notice 使用自 Obsidian 0.9.7 已存在的 `setMessage(DocumentFragment)`，不依赖 1.8.7 才公开的 `containerEl`，因此不提高当前 `minAppVersion`。
+5. **测试重点**：不以全仓库覆盖率数字替代风险判断；本轮优先把 `plugin.ts` 行覆盖率从 31.42% 提升到至少 70%，覆盖注册、设置、连接按钮、保存与卸载边界。
+6. **版本策略**：实现仍保留 manifest/package `0.6.0`；只有形成并授权新 Release 时才执行统一版本提升，避免开发中途制造未发布版本身份。
+
+## 2026-10-21 同类产品调研与状态栏优化
+
+1. **成熟度判断**：Media Extended 具有明显更高的 GitHub 采用量和持续发布记录，适合作为播放器、时间戳和可发现性参考；其 v4 已转为闭源，不能复制实现。SpeechKit 为 MIT 且持续维护，阶段化进度与无障碍状态文本可作为公开实现参考。LexVoice 的任务恢复与分阶段处理较完整，但新代码采用专有许可且不公开，只借鉴产品概念。
+2. **辅助参考**：YTExtract 的 MIT 状态栏实现证明轻量入口可行，但采用量和并发处理证据不足，不能直接视为成熟基线。Audio Timestamp Player 的真实 Vault 回归清单值得采用到后续手工验收。其余多平台插件采用量低、依赖外部工具或扩大凭据范围，不足以改变当前架构。
+3. **本轮采纳**：保留现有持久 Notice 和 Stop waiting，在 Obsidian 状态栏同步有限任务状态。共享 tracker 支持多个笔记或不同命令并发；单任务显示固定阶段与合法百分比，多任务只显示数量，关闭任一旧任务不会隐藏仍运行的新任务。
+4. **安全边界**：状态栏与 Notice 使用同一条由插件生成的有限文案，不读取 `progress_message`、`step_name`、task ID、路径或后端错误。状态栏不新增取消动作、网络调用、持久化数据或依赖。
+5. **暂不采纳**：本轮不增加完整媒体播放器、聊天、批量播放列表同步、插件侧 API Key、自带下载器或 Whisper、后台自动写入和多对象知识库。这些能力会扩大产品范围、凭据面或笔记覆盖风险，且不解决当前发布前的核心验收缺口。
+6. **证据来源**：`https://github.com/aidenlx/media-extended`、`https://github.com/brittain9/speech-kit-obsidian-plugin`、`https://github.com/Lynn-x/LexVoice`、`https://github.com/mwkloh/ytextract`、`https://github.com/ITNQ18/obsidian-audio-timestamp-player`，以及 Obsidian 官方状态栏与插件政策文档。
+
+## 2026-10-22 原生 UI 验收恢复
+
+1. 当前 Windows 控制接口已能唯一定位隔离 Vault 的 Obsidian 窗口；此前不可操作原生窗口的结论只适用于当时工具环境。真实 YouTube 字幕写入与重复执行一致性已通过。
+2. 后端仓库存在外部未提交源码改动，本轮不启动该工作区。使用独立 `127.0.0.1:18765` 模拟服务验证真实插件界面的连接、进度、转录写入、摘要隔离和停止等待，严格区别于真实 provider 验收。
+3. 测试后停止模拟服务，将隔离 Vault 插件地址恢复为 `http://127.0.0.1:8000`，保留真实字幕副本及模拟产物。未调用真实 DeepSeek、未访问私人 Vault、未执行 Git 提交或远端写入。
+
+## 2026-10-23 真实后端验收边界
+
+1. 后端工作区虽存在外部未提交改动，但关键源码与测试文件在测试前后指纹一致，因此允许把它作为一个冻结候选做只读测试和 loopback 黑盒验收；不得据此接管、整理或提交这些外部改动。
+2. 真实验收必须分别记录后端直调和 Obsidian 联合证据。后端直调已覆盖 YouTube 平台字幕、强制 base CPU ASR 与 Bilibili 显式 P2；隔离 Vault 已覆盖旧 YouTube ASR 兼容命令和平台中立 Bilibili 多 P 命令。
+3. 原生目标切换与 marker 歧义继续采用 fail closed：停止本地等待或拒绝写入，后端任务可能继续完成，但目标笔记必须保持原样。验收以固定提示、文件哈希和 marker/canary 计数共同证明。
+4. 插件重载通过证明生命周期与命令重新注册。状态栏单任务显示已在真实任务中观察到；双任务计数使用独立 loopback 模拟服务在原生 Obsidian UI 中验收，证明 UI 生命周期与本地停止语义，不等同于真实 provider 并发能力或后端取消能力。
+5. Web Clipper 已安装不等于模板验收通过。浏览器自动化策略禁止控制扩展页面并禁止换通道绕过，因此模板导入和三种 URL 剪藏保持外部人工闸门。
+6. 2026-10-23 后续由用户在本机后端界面保存 DeepSeek Key。只读取脱敏接口后确认 DPAPI 安全存储、`api.deepseek.com`、`deepseek-flash` 与 `saved=true`；原始 Key 始终不进入插件、笔记、日志摘录或项目文档。
+7. 真实 DeepSeek 验收最多提交一次，不对不明确结果自动重试。本次 Obsidian Notice 明确显示任务已启动，后端任务随后完成，隔离笔记新增唯一 YSummary 区域；删除该新增区域可重建提交前文件哈希，因此原 Transcript、Frontmatter 和用户正文均未改变。
+8. 真实连接测试与真实摘要任务是两类证据：前者明确验证 `deepseek-flash`，后者验证保存配置驱动的完整摘要链路。当前生成笔记页脚显示“未指定模型”，只能判定为结果元数据展示缺口，不能据此宣称摘要请求未使用后端保存模型，也不能把页脚当作精确模型证据。
+9. 真实 DeepSeek 闸门已通过，v0.5 Phase B 可以进入设计与实现；仍保持插件侧无 Key、无 Cookie、单次提交、失败脱敏和 Transcript 永不被摘要覆盖。
+
+## 2026-10-23 v0.7 双任务状态栏验收
+
+1. 使用同一隔离笔记同时启动本地转录与 DeepSeek 摘要，两个命令通过各自的请求序列保持并发；模拟服务只监听 `127.0.0.1:18765`，任务持续返回固定 `processing` 与 42% 进度，不调用真实 provider。
+2. 多任务状态栏只能显示固定数量文案；本次原生 UI 显示 `Video2Knowledge: 2 local tasks running.`。停止其中一个任务的本地等待后，状态栏恢复为剩余任务的固定状态；停止最后一个任务后隐藏。
+3. Stop waiting 只终止插件轮询。模拟服务请求记录中没有取消、停止或删除路由，两个后端模拟任务仍保持 processing，符合现有产品语义。
+4. 验收笔记未写入 Transcript 或 Summary 区域，Frontmatter、正文 canary 与文件哈希保持预期。测试结束后模拟服务停止，隔离插件地址恢复 `http://127.0.0.1:8000`；该证据关闭 v0.7 原生双任务 UI 缺口，但不扩写为真实后端并发验收。
+
+## 2026-10-23 v0.3/v0.5 失败场景原生 UI 验收
+
+1. 无可转写文字在插件契约中归入任务 failed，用户界面继续使用固定 `Local ASR transcription failed.`，不显示后端 `error`、`progress_message`、步骤名或任务 ID。失败后不得下载 transcript，也不得修改笔记。
+2. Bilibili 风控可能发生在分 P 预览阶段。插件只显示 HTTP 状态级提示 `Local ASR service request failed (HTTP 412).`，不得回显响应 detail、Cookie、Authorization 或其他后端文本；预览失败后不得提交转录任务或打开选择 Modal。
+3. 原生 UI 使用只监听 `127.0.0.1:18765` 的独立模拟服务重放以上错误。真实后端既有黑盒证据与本次真实插件 UI 证据必须分开记录，不能把模拟响应描述成 Bilibili 当前线上风控复现。
+4. 两个测试笔记的 SHA-256 前后不变，网络记录没有结果下载。结束后模拟服务停止，插件地址恢复 `http://127.0.0.1:8000`，测试笔记和模拟脚本保留供复查。
+
+## 2026-10-23 v0.5 Bilibili Phase B
+
+1. **命令兼容**：继续使用现有 `insert-youtube-deepseek-summary` 命令 ID，避免破坏用户快捷键；命令输入改为平台中立 Video URL，接受现有安全 URL 层支持的 YouTube 与公开 Bilibili 地址、BV/av 分享文本和 b23.tv 链接。
+2. **分 P 复用**：Bilibili 摘要复用 Phase A 的 `/api/bili-pages` 预览、单 P 自动选择、多 P Modal、`previous_pages` → URL `?p=N` → 空选择默认顺序。取消选择时不创建 runner、不提交摘要任务。
+3. **摘要契约**：`StartSummaryRequest` 仅增加可选 `bilibiliPages`；客户端校验为非空、唯一正整数数组后映射到 `bilibili_pages`。其余 detailed/note/reuse、空 `api_key` 和 DeepSeek 固定策略保持不变，不增加 Cookie 或插件侧凭据。
+4. **付费提交边界**：预览和选择发生在摘要 runner 创建前；期间目标切换、正文变化、旧请求失效或用户取消都会在 provider 提交前停止。摘要 runner 仍只提交一次且不自动重试。
+5. **错误与写入**：Bilibili 预览错误使用独立稳定文案，避免把 HTTP 400 误报为 DeepSeek 未配置。成功结果仍只更新 `YSummary`，完整 `YTranscript`、Frontmatter 和用户正文受既有 fail closed 规则保护。
+6. **验收状态**：离线全量 19 suites、444 tests、lint、build、本阶段 Prettier 与 `git diff --check` 通过。隔离 Vault 使用公开多 P 视频明确选择 P2，仅提交一次真实 DeepSeek detailed/note/reuse 任务；任务完成并写入唯一非空 YSummary，移除该区域可逐字节重建提交前文件，证明 Transcript、Frontmatter 和正文未改变。
+7. **Modal 文案**：转录与摘要继续复用同一分 P 选择实现，但提交按钮由调用方提供。转录保持 `Transcribe selected parts`，摘要使用 `Summarize selected parts`。完整重启隔离 Vault 后已在原生 UI 确认；验证时只取消 Modal，没有再次提交付费任务。
+
+## 2026-10-23 发布前剩余闸门复核
+
+1. **摘要模型页脚归属后端**：`LLMSummarizer` 会把缺省 DeepSeek 模型解析为 `deepseek-flash`，但生成流程仍把解析前的空请求字段传给页脚，因此出现“deepseek · 未指定模型”。最小修复是在后端使用 `summarizer.model` 作为日志与页脚的实际模型，并用缺省模型请求回归测试固定该行为。插件不得解析或改写后端 Markdown 来掩盖此缺陷。
+2. **外部脏工作区边界**：上述最小修复涉及 `Video2Knowledge-next/backend/main.py` 与 `tests/test_api.py`，两者当前都有大规模外部未提交改动。本项目只记录根因和验收规格，不在冲突文件上叠加修改。
+3. **Web Clipper 自动化边界**：已安装扩展的 manifest 明确入口与快捷键，但 Chrome 页面自动化不能触发扩展命令，且浏览器策略拒绝访问 `chrome-extension://` 并明确禁止换通道绕过。该项继续作为人工验收闸门；不能把“扩展已安装”写成模板导入或剪藏通过。
+4. **隔离 Vault 命令闸门关闭**：插件自身六个命令的真实或受控模拟验收范围已经覆盖，v0.6 路线图中的“隔离 Vault 全部真实命令验收”可以标记完成。Web Clipper 与 GitHub Release 仍分别保留独立闸门。

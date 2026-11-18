@@ -184,7 +184,7 @@ export class Video2KnowledgeClient {
 		request: StartSummaryRequest,
 	): Promise<StartSummaryResponse> {
 		const videoUrl = requireNonEmpty(request.videoUrl, "videoUrl");
-		const body = JSON.stringify({
+		const requestPayload: Record<string, unknown> = {
 			video_url: videoUrl,
 			processing_mode: request.processingMode ?? "reuse",
 			output: "note",
@@ -194,7 +194,13 @@ export class Video2KnowledgeClient {
 			whisper_model: request.whisperModel ?? "base",
 			use_gpu: request.useGpu ?? false,
 			llm_config: { model_type: "deepseek", api_key: "" },
-		});
+		};
+		if (request.bilibiliPages !== undefined) {
+			requestPayload.bilibili_pages = validateRequestedBilibiliPages(
+				request.bilibiliPages,
+			);
+		}
+		const body = JSON.stringify(requestPayload);
 		const response = await this.send("POST", "/api/summarize", {
 			headers: { "Content-Type": "application/json" },
 			body,

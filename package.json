@@ -1,6 +1,6 @@
 {
 	"name": "video2knowledge-companion",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "Capture video transcripts and connect notes to a local Video2Knowledge service.",
 	"main": "main.js",
 	"repository": {

@@ -542,6 +542,47 @@ describe("Video2KnowledgeClient.startSummary", () => {
 		});
 	});
 
+	it("adds only bilibili_pages for an explicit Bilibili summary selection", async () => {
+		const { transport, requests } = createTransport(() => ({
+			status: 200,
+			text: START_OK,
+		}));
+		const client = new Video2KnowledgeClient({ transport });
+		await client.startSummary({
+			videoUrl: "https://www.bilibili.com/video/BV1DKbxzjEz9",
+			bilibiliPages: [1, 3],
+		});
+		const payload = JSON.parse(String(requests[0].body));
+		expect(payload).toMatchObject({
+			video_url: "https://www.bilibili.com/video/BV1DKbxzjEz9",
+			bilibili_pages: [1, 3],
+			processing_mode: "reuse",
+			output: "note",
+			summary_style: "detailed",
+			llm_config: { model_type: "deepseek", api_key: "" },
+		});
+		expect(String(requests[0].body)).not.toMatch(/cookie|token|sk-/i);
+	});
+
+	it.each([[[]], [[0]], [[-1]], [[1.5]], [[1, 1]]])(
+		"rejects invalid summary bilibiliPages %p before transport",
+		async (bilibiliPages) => {
+			const { transport, requests } = createTransport(() => ({
+				status: 200,
+				text: START_OK,
+			}));
+			const client = new Video2KnowledgeClient({ transport });
+			const error = await captureError(
+				client.startSummary({
+					videoUrl: "https://www.bilibili.com/video/BV1DKbxzjEz9",
+					bilibiliPages,
+				}),
+			);
+			expect(error.kind).toBe("invalid-request");
+			expect(requests).toHaveLength(0);
+		},
+	);
+
 	it("rejects a blank video URL before transport", async () => {
 		const { transport, requests } = createTransport(() => ({
 			status: 200,

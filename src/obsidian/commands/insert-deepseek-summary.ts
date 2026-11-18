@@ -5,14 +5,28 @@ import { SummaryRunner } from "src/video2knowledge/summary-runner";
 import {
 	SummaryRunError,
 	Video2KnowledgeClientError,
+	type BilibiliPagesPreview,
 	type MarkdownSummary,
 	type StartSummaryRequest,
+	type TranscriptionTask,
 } from "src/video2knowledge/types";
-import { extractYouTubeUrlFromText, isValidYouTubeUrl } from "src/youtube/url";
+import {
+	classifySupportedVideoUrl,
+	extractSupportedVideoUrlFromText,
+} from "src/video2knowledge/video-url";
 
-import type { InsertAsrTranscriptSettings } from "./insert-asr-transcript";
+import {
+	getDefaultBilibiliPages,
+	type InsertAsrTranscriptSettings,
+} from "./insert-asr-transcript";
 import { getSelectedText } from "../editor-extensions";
 import { getSourceUrlFromFrontmatter } from "../frontmatter";
+import {
+	createLocalTaskProgress,
+	type LocalTaskProgress,
+	type LocalTaskProgressFactory,
+} from "../local-task-progress";
+import { BilibiliPagesModal } from "../modals/bilibili-pages-modal";
 import { PromptModal } from "../modals/prompt-modal";
 import { replaceSummaryRegion } from "../transcript-region";
 import { obsidianVideo2KnowledgeTransport } from "../video2knowledge-transport";
@@ -20,7 +34,10 @@ import { obsidianVideo2KnowledgeTransport } from "../video2knowledge-transport";
 export interface SummaryRunnerLike {
 	run(
 		request: StartSummaryRequest,
-		options?: { isCancelled?: () => boolean },
+		options?: {
+			isCancelled?: () => boolean;
+			onProgress?: (task: TranscriptionTask) => void;
+		},
 	): Promise<MarkdownSummary>;
 }
 
@@ -29,13 +46,22 @@ export interface InsertDeepSeekSummaryContext {
 	settings: InsertAsrTranscriptSettings;
 	createRunner?: (baseUrl: string) => SummaryRunnerLike;
 	showNotice?: (message: string, duration?: number) => void;
+	createProgress?: LocalTaskProgressFactory;
 	isDesktopApp?: () => boolean;
+	previewBilibiliPages?: (
+		baseUrl: string,
+		videoUrl: string,
+	) => Promise<BilibiliPagesPreview>;
+	selectBilibiliPages?: (
+		preview: BilibiliPagesPreview,
+		defaultPages: number[],
+	) => Promise<number[] | null>;
 }
 
 const MOBILE_MESSAGE =
 	"DeepSeek summary requires Obsidian desktop and a running local Video2Knowledge service.";
 const NO_TARGET_MESSAGE = "DeepSeek summary failed: no target note is open.";
-const NOT_YOUTUBE_MESSAGE = "Not a valid YouTube URL.";
+const NOT_SUPPORTED_MESSAGE = "Not a supported YouTube or Bilibili URL.";
 const TARGET_CHANGED_MESSAGE =
 	"DeepSeek summary stopped: the target note changed; local waiting stopped, and the backend task may still be running.";
 const CANCELLED_MESSAGE =
@@ -47,6 +73,8 @@ const INVALID_BASE_URL_MESSAGE =
 const TRANSPORT_MESSAGE = "Cannot reach the local Video2Knowledge service.";
 const INCOMPATIBLE_MESSAGE =
 	"Local summary service returned an incompatible response.";
+const BILIBILI_PREVIEW_INCOMPATIBLE_MESSAGE =
+	"Local service returned incompatible Bilibili video-part data.";
 const CONFIG_MESSAGE =
 	"DeepSeek is not configured in the local Video2Knowledge service.";
 const FAILED_MESSAGE = "DeepSeek summary task failed in the local service.";
@@ -65,6 +93,16 @@ function defaultCreateRunner(baseUrl: string): SummaryRunnerLike {
 			baseUrl,
 		}),
 	});
+}
+
+async function defaultPreviewBilibiliPages(
+	baseUrl: string,
+	videoUrl: string,
+): Promise<BilibiliPagesPreview> {
+	return new Video2KnowledgeClient({
+		transport: obsidianVideo2KnowledgeTransport,
+		baseUrl,
+	}).previewBilibiliPages(videoUrl);
 }
 
 function mapRunFailure(error: unknown): string {
@@ -105,12 +143,44 @@ function mapRunFailure(error: unknown): string {
 	return UNKNOWN_MESSAGE;
 }
 
+function mapBilibiliPreviewFailure(error: unknown): string {
+	if (error instanceof Video2KnowledgeClientError) {
+		switch (error.kind) {
+			case "invalid-base-url":
+				return INVALID_BASE_URL_MESSAGE;
+			case "transport-error":
+				return TRANSPORT_MESSAGE;
+			case "http-error":
+				return typeof error.status === "number"
+					? "Could not load Bilibili video parts (HTTP " +
+							error.status +
+							")."
+					: UNKNOWN_MESSAGE;
+			case "invalid-json":
+			case "protocol-error":
+				return BILIBILI_PREVIEW_INCOMPATIBLE_MESSAGE;
+			default:
+				return UNKNOWN_MESSAGE;
+		}
+	}
+	return UNKNOWN_MESSAGE;
+}
+
 export class InsertDeepSeekSummaryCommand {
 	private readonly app: App;
 	private readonly settings: InsertAsrTranscriptSettings;
 	private readonly createRunner: (baseUrl: string) => SummaryRunnerLike;
 	private readonly showNotice: (message: string, duration?: number) => void;
+	private readonly createProgress: LocalTaskProgressFactory;
 	private readonly isDesktopApp: () => boolean;
+	private readonly previewBilibiliPages: (
+		baseUrl: string,
+		videoUrl: string,
+	) => Promise<BilibiliPagesPreview>;
+	private readonly selectBilibiliPages: (
+		preview: BilibiliPagesPreview,
+		defaultPages: number[],
+	) => Promise<number[] | null>;
 	private readonly inFlight = new Map<string, number>();
 
 	constructor(context: InsertDeepSeekSummaryContext) {
@@ -120,8 +190,20 @@ export class InsertDeepSeekSummaryCommand {
 		this.showNotice =
 			context.showNotice ??
 			((message, duration) => new Notice(message, duration));
+		this.createProgress = context.createProgress ?? createLocalTaskProgress;
 		this.isDesktopApp =
 			context.isDesktopApp ?? (() => Platform.isDesktopApp);
+		this.previewBilibiliPages =
+			context.previewBilibiliPages ?? defaultPreviewBilibiliPages;
+		this.selectBilibiliPages =
+			context.selectBilibiliPages ??
+			((preview, defaultPages) =>
+				new BilibiliPagesModal(
+					this.app,
+					preview,
+					defaultPages,
+					"Summarize selected parts",
+				).openAndGetValue());
 	}
 
 	async execute(
@@ -141,12 +223,16 @@ export class InsertDeepSeekSummaryCommand {
 		const target: TargetKey = { path: targetFile.path };
 		const requestId = this.nextRequestId(target);
 		let editorSnapshot: string | null = null;
+		let progress: LocalTaskProgress | null = null;
+		let requestStage: "prepare" | "bilibili-preview" | "summary" =
+			"prepare";
 
 		try {
 			const url = await this.getUrlWithConfirmation(editor, targetFile);
 			if (!url) return;
-			if (!isValidYouTubeUrl(url)) {
-				this.showNotice(NOT_YOUTUBE_MESSAGE);
+			const source = classifySupportedVideoUrl(url);
+			if (!source) {
+				this.showNotice(NOT_SUPPORTED_MESSAGE);
 				return;
 			}
 			if (!this.isStillInFlight(target, requestId)) return;
@@ -157,17 +243,62 @@ export class InsertDeepSeekSummaryCommand {
 
 			editorSnapshot = editor.getValue();
 			const snapshot = editorSnapshot;
+			let bilibiliPages: number[] | undefined;
+			if (source === "bilibili") {
+				requestStage = "bilibili-preview";
+				const preview = await this.previewBilibiliPages(
+					this.settings.video2KnowledgeBaseUrl,
+					url,
+				);
+				if (!this.isStillInFlight(target, requestId)) return;
+				if (
+					this.isTargetStale(targetFile, target, getCurrentFile) ||
+					editor.getValue() !== snapshot
+				) {
+					this.showNotice(TARGET_CHANGED_MESSAGE);
+					return;
+				}
+				if (preview.totalPages === 1) {
+					bilibiliPages = [preview.pages[0].page];
+				} else {
+					const selectedPages = await this.selectBilibiliPages(
+						preview,
+						getDefaultBilibiliPages(preview, url),
+					);
+					if (!selectedPages) return;
+					bilibiliPages = selectedPages;
+					if (!this.isStillInFlight(target, requestId)) return;
+					if (
+						this.isTargetStale(
+							targetFile,
+							target,
+							getCurrentFile,
+						) ||
+						editor.getValue() !== snapshot
+					) {
+						this.showNotice(TARGET_CHANGED_MESSAGE);
+						return;
+					}
+				}
+			}
+			requestStage = "summary";
 			const runner = this.createRunner(
 				this.settings.video2KnowledgeBaseUrl,
 			);
+			progress = this.createProgress("summary");
 			const isCancelled = () =>
+				progress?.isCancelled() === true ||
 				!this.isStillInFlight(target, requestId) ||
 				this.isTargetStale(targetFile, target, getCurrentFile) ||
 				editor.getValue() !== snapshot;
 
-			const summary = await runner.run(this.buildRequest(url), {
-				isCancelled,
-			});
+			const summary = await runner.run(
+				this.buildRequest(url, bilibiliPages),
+				{
+					isCancelled,
+					onProgress: (task) => progress?.update(task),
+				},
+			);
 
 			if (!this.isStillInFlight(target, requestId)) return;
 			if (
@@ -197,7 +328,13 @@ export class InsertDeepSeekSummaryCommand {
 				this.showNotice(TARGET_CHANGED_MESSAGE);
 				return;
 			}
-			this.showNotice(mapRunFailure(error));
+			this.showNotice(
+				requestStage === "bilibili-preview"
+					? mapBilibiliPreviewFailure(error)
+					: mapRunFailure(error),
+			);
+		} finally {
+			progress?.close();
 		}
 	}
 
@@ -207,7 +344,11 @@ export class InsertDeepSeekSummaryCommand {
 	): Promise<string | null> {
 		const detectedUrl = await this.detectUrl(editor, targetFile);
 		try {
-			const prompt = new PromptModal(this.app, detectedUrl || undefined);
+			const prompt = new PromptModal(
+				this.app,
+				detectedUrl || undefined,
+				"Video URL",
+			);
 			const userUrl = await new Promise<string>((resolve, reject) => {
 				prompt.openAndGetValue(resolve, reject);
 			});
@@ -225,20 +366,25 @@ export class InsertDeepSeekSummaryCommand {
 			this.app,
 			targetFile,
 		);
-		if (frontmatterUrl) return frontmatterUrl;
+		if (frontmatterUrl) {
+			return (
+				extractSupportedVideoUrlFromText(frontmatterUrl) ??
+				frontmatterUrl
+			);
+		}
 
 		try {
 			const selectedText = editor.somethingSelected()
 				? editor.getSelection()
 				: getSelectedText(editor);
-			const selectionUrl = extractYouTubeUrlFromText(selectedText);
+			const selectionUrl = extractSupportedVideoUrlFromText(selectedText);
 			if (selectionUrl) return selectionUrl;
 		} catch {
 			// Continue to clipboard when editor selection lookup fails.
 		}
 
 		try {
-			return extractYouTubeUrlFromText(
+			return extractSupportedVideoUrlFromText(
 				await navigator.clipboard.readText(),
 			);
 		} catch {
@@ -246,14 +392,21 @@ export class InsertDeepSeekSummaryCommand {
 		}
 	}
 
-	private buildRequest(videoUrl: string): StartSummaryRequest {
-		return {
+	private buildRequest(
+		videoUrl: string,
+		bilibiliPages?: number[],
+	): StartSummaryRequest {
+		const request: StartSummaryRequest = {
 			videoUrl,
 			processingMode: "reuse",
 			preferSubtitles: this.settings.asrPreferSubtitles,
 			whisperModel: this.settings.asrWhisperModel.trim() || "base",
 			useGpu: this.settings.asrUseGpu,
 		};
+		if (bilibiliPages !== undefined) {
+			request.bilibiliPages = bilibiliPages;
+		}
+		return request;
 	}
 
 	private nextRequestId(target: TargetKey): number {
